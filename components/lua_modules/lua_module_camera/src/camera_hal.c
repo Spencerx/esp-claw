@@ -117,6 +117,46 @@ static void camera_fourcc_to_string(uint32_t pixel_format, char out[5])
     }
 }
 
+static void camera_apply_internal_sizeimage(struct v4l2_format *format)
+{
+    const uint32_t jpeg_min_size = 40000U;
+    const uint32_t jpeg_compression_ratio = 6U;
+    const uint32_t jpeg_source_bpp = 16U;
+    uint64_t pixels;
+    uint64_t size;
+
+    if (format == NULL || format->type != V4L2_BUF_TYPE_VIDEO_CAPTURE) {
+        return;
+    }
+    if (format->fmt.pix.sizeimage != 0) {
+        return;
+    }
+    if (format->fmt.pix.pixelformat != V4L2_PIX_FMT_JPEG &&
+            format->fmt.pix.pixelformat != V4L2_PIX_FMT_MJPEG &&
+            format->fmt.pix.pixelformat != V4L2_PIX_FMT_H264) {
+        return;
+    }
+    if (format->fmt.pix.width == 0 || format->fmt.pix.height == 0) {
+        return;
+    }
+
+    pixels = (uint64_t)format->fmt.pix.width * format->fmt.pix.height;
+    if (pixels == 0 || pixels > UINT32_MAX) {
+        return;
+    }
+
+    /* esp_video consumes sizeimage in VIDIOC_S_FMT; estimate compressed buffers only when the driver did not provide one. */
+    size = ((pixels * jpeg_source_bpp / 8U) + jpeg_compression_ratio - 1U) / jpeg_compression_ratio;
+    if (size < jpeg_min_size) {
+        size = jpeg_min_size;
+    }
+    if (size > UINT32_MAX) {
+        return;
+    }
+
+    format->fmt.pix.sizeimage = (uint32_t)size;
+}
+
 static esp_err_t camera_release_borrowed_slot_locked(camera_borrowed_frame_t *slot)
 {
     esp_err_t ret = ESP_OK;
@@ -350,6 +390,9 @@ static esp_err_t camera_open_locked(const char *dev_path, const camera_open_opts
         return ESP_FAIL;
     }
 
+    requested_width = format.fmt.pix.width;
+    requested_height = format.fmt.pix.height;
+    requested_pixel_format = format.fmt.pix.pixelformat;
     if (opts != NULL && (opts->width != 0 || opts->height != 0 || opts->pixel_format != 0)) {
         requested_width = opts->width != 0 ? opts->width : format.fmt.pix.width;
         requested_height = opts->height != 0 ? opts->height : format.fmt.pix.height;
@@ -363,44 +406,47 @@ static esp_err_t camera_open_locked(const char *dev_path, const camera_open_opts
         if (opts->pixel_format != 0) {
             format.fmt.pix.pixelformat = opts->pixel_format;
         }
-        if (ioctl(s_camera.fd, VIDIOC_S_FMT, &format) != 0) {
-            int saved_errno = errno;
-            bool nearest_applied = false;
+    }
 
-            if (opts->nearest && requested_width != 0 && requested_height != 0) {
-                uint32_t closest_width = 0;
-                uint32_t closest_height = 0;
-                err = camera_find_closest_size_locked(requested_pixel_format, requested_width, requested_height, &closest_width, &closest_height);
-                if (err == ESP_OK) {
-                    ESP_LOGW(TAG, "Requested camera size %ux%u rejected (errno=%d), trying closest %ux%u",
-                             (unsigned)requested_width, (unsigned)requested_height, saved_errno,
-                             (unsigned)closest_width, (unsigned)closest_height);
-                    memset(&format, 0, sizeof(format));
-                    format.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-                    format.fmt.pix.width = closest_width;
-                    format.fmt.pix.height = closest_height;
-                    format.fmt.pix.pixelformat = requested_pixel_format;
-                    if (ioctl(s_camera.fd, VIDIOC_S_FMT, &format) == 0) {
-                        nearest_applied = true;
-                    } else {
-                        ESP_LOGW(TAG, "VIDIOC_S_FMT closest size %ux%u failed (errno=%d)",
-                                 (unsigned)closest_width, (unsigned)closest_height, errno);
-                    }
+    camera_apply_internal_sizeimage(&format);
+    if (ioctl(s_camera.fd, VIDIOC_S_FMT, &format) != 0) {
+        int saved_errno = errno;
+        bool nearest_applied = false;
+
+        if (opts != NULL && opts->nearest && requested_width != 0 && requested_height != 0) {
+            uint32_t closest_width = 0;
+            uint32_t closest_height = 0;
+            err = camera_find_closest_size_locked(requested_pixel_format, requested_width, requested_height, &closest_width, &closest_height);
+            if (err == ESP_OK) {
+                ESP_LOGW(TAG, "Requested camera size %ux%u rejected (errno=%d), trying closest %ux%u",
+                         (unsigned)requested_width, (unsigned)requested_height, saved_errno,
+                         (unsigned)closest_width, (unsigned)closest_height);
+                memset(&format, 0, sizeof(format));
+                format.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+                format.fmt.pix.width = closest_width;
+                format.fmt.pix.height = closest_height;
+                format.fmt.pix.pixelformat = requested_pixel_format;
+                camera_apply_internal_sizeimage(&format);
+                if (ioctl(s_camera.fd, VIDIOC_S_FMT, &format) == 0) {
+                    nearest_applied = true;
                 } else {
-                    ESP_LOGW(TAG, "No closest camera size found for %ux%u format=0x%08" PRIx32 ": %s",
-                             (unsigned)requested_width, (unsigned)requested_height, requested_pixel_format, esp_err_to_name(err));
+                    ESP_LOGW(TAG, "VIDIOC_S_FMT closest size %ux%u failed (errno=%d)",
+                             (unsigned)closest_width, (unsigned)closest_height, errno);
                 }
-            }
-
-            if (!nearest_applied) {
-                ESP_LOGE(TAG, "VIDIOC_S_FMT failed for requested size=%ux%u format=0x%08" PRIx32 " (errno=%d)",
-                         (unsigned)requested_width, (unsigned)requested_height, requested_pixel_format, saved_errno);
-                camera_close_locked();
-                return ESP_ERR_NOT_SUPPORTED;
+            } else {
+                ESP_LOGW(TAG, "No closest camera size found for %ux%u format=0x%08" PRIx32 ": %s",
+                         (unsigned)requested_width, (unsigned)requested_height, requested_pixel_format, esp_err_to_name(err));
             }
         }
-        /* Driver may have adjusted any field — adopt whatever it reports back. */
+
+        if (!nearest_applied) {
+            ESP_LOGE(TAG, "VIDIOC_S_FMT failed for requested size=%ux%u format=0x%08" PRIx32 " sizeimage=%" PRIu32 " (errno=%d)",
+                     (unsigned)requested_width, (unsigned)requested_height, requested_pixel_format, format.fmt.pix.sizeimage, saved_errno);
+            camera_close_locked();
+            return ESP_ERR_NOT_SUPPORTED;
+        }
     }
+    /* Driver may have adjusted any field — adopt whatever it reports back. */
 
     s_camera.width = format.fmt.pix.width;
     s_camera.height = format.fmt.pix.height;
@@ -464,9 +510,10 @@ static esp_err_t camera_open_locked(const char *dev_path, const camera_open_opts
     s_camera.opened = true;
     s_camera.settled_frames = 0;
 
-    ESP_LOGI(TAG, "Camera opened: path=%s size=%ux%u format=%s",
+    ESP_LOGI(TAG, "Camera opened: path=%s size=%ux%u format=%s sizeimage=%" PRIu32 " buffers=%" PRIu32 " buffer_len=%zu",
              dev_path, (unsigned)s_camera.width, (unsigned)s_camera.height,
-             pixel_format);
+             pixel_format, format.fmt.pix.sizeimage, s_camera.buffer_count,
+             s_camera.buffer_count > 0 ? s_camera.buffer_lengths[0] : 0);
 
     /* Settle the stream at open time with a dedicated timeout so that capture()
      * calls are not penalised by the sensor warm-up delay. */
