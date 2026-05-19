@@ -39,6 +39,10 @@ type LocalWebImMessage = WebImMessage & {
   files?: string[];
 };
 
+const [webImMessages, setWebImMessages] = createSignal<LocalWebImMessage[]>([]);
+let webImUserLocalSeq = 0;
+let webImUserLocalId = 0;
+
 declare global {
   interface Window {
     marked?: MarkedRuntime;
@@ -183,9 +187,8 @@ function loadOrCreateChatId(): string {
 export const WebImPage: Component = () => {
   const chatId = loadOrCreateChatId();
   /** In-memory transcript only — lost on refresh. */
-  const [messages, setMessages] = createSignal<LocalWebImMessage[]>([]);
-  let userLocalSeq = 0;
-  let userLocalId = 0;
+  const messages = webImMessages;
+  const setMessages = setWebImMessages;
   const [input, setInput] = createSignal('');
   const [pendingPaths, setPendingPaths] = createSignal<string[]>([]);
   const [error, setError] = createSignal<string | null>(null);
@@ -357,14 +360,14 @@ export const WebImPage: Component = () => {
   };
 
   const makeLocalMessage = (text: string, files: string[]): LocalWebImMessage => {
-    userLocalSeq -= 1;
-    userLocalId += 1;
+    webImUserLocalSeq -= 1;
+    webImUserLocalId += 1;
     return {
-      seq: userLocalSeq,
+      seq: webImUserLocalSeq,
       role: 'user',
       text,
       files,
-      localId: `user-${Date.now().toString(36)}-${userLocalId.toString(36)}`,
+      localId: `user-${Date.now().toString(36)}-${webImUserLocalId.toString(36)}`,
       sendStatus: 'pending',
     };
   };
@@ -582,6 +585,7 @@ export const WebImPage: Component = () => {
               </Button>
               <Switch
                 class="ml-1"
+                labelClass="text-[var(--color-text-secondary)]"
                 checked={markdownPreview()}
                 disabled={markdownPreviewLoading()}
                 onChange={(checked) => void toggleMarkdownPreview(checked)}
