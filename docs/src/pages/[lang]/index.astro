@@ -7,6 +7,7 @@ import { getHomeContent } from "@/site/home-i18n";
 
 import EspressifLogoHorizontal from "@/assets/logos/espressif-logo-horizontal.svg";
 import CloudToClaw from "@/assets/images/cloud-to-claw.png";
+import ArchitectureDiagram from "@/assets/images/architecture-diagram-dark.webp";
 
 import { Zap } from "@lucide/astro"
 import ClawLogoHorizontalRaw from "@/assets/logos/logo-horizontal.svg?raw";
@@ -611,6 +612,63 @@ const flashHref = localeHref(lang, "flash");
       }
     }
 
+    /* ── Technological Advantages ── */
+    .tech-advantages {
+      padding: 5rem 2rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: center;
+      background: var(--bg-base);
+    }
+
+    .tech-advantages-inner {
+      max-width: 1120px;
+      width: 100%;
+      text-align: center;
+    }
+
+    .tech-advantages-inner h2 {
+      font-size: clamp(1.4rem, 2vw, 1.7rem);
+      font-weight: 700;
+      letter-spacing: -0.025em;
+      color: var(--text-primary);
+      margin: 0 0 2rem;
+    }
+
+    .tech-advantages-figure {
+      margin: 0;
+    }
+
+    .tech-advantages-figure img {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    .tech-advantages-note {
+      margin-top: 0.85rem;
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      line-height: 1.55;
+      text-align: center;
+    }
+
+    @media (max-width: 900px) {
+      .tech-advantages {
+        padding: 3.5rem 1.25rem;
+      }
+
+      .tech-advantages-inner h2 {
+        text-align: left;
+        margin-bottom: 1.5rem;
+        font-size: clamp(1.25rem, 2vw, 1.4rem);
+      }
+
+      .tech-advantages-note {
+        text-align: left;
+      }
+    }
+
     /* ── Feat and Demo ── */
     .feat-and-demo {
       display: grid;
@@ -1178,6 +1236,18 @@ const flashHref = localeHref(lang, "flash");
       <p>{h.whatsMissingAfterIoTP1}</p>
       <img src={CloudToClaw.src} alt="cloud-to-claw" />
       <p>{h.whatsMissingAfterIoTP2}</p>
+    </div>
+  </section>
+
+  <section class="tech-advantages">
+    <div class="tech-advantages-inner">
+      <h2>{h.techAdvantagesTitle}</h2>
+      <figure class="tech-advantages-figure">
+        <img src={ArchitectureDiagram.src} alt={h.techAdvantagesTitle} loading="lazy" />
+        <figcaption class="tech-advantages-note">
+          All logos and product names are the property of their respective owners and are used for identification purposes only.
+        </figcaption>
+      </figure>
     </div>
   </section>
 

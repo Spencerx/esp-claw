@@ -64,6 +64,7 @@ export interface HomeContent {
   whatsMissingAfterIoTTitle: string;
   whatsMissingAfterIoTP1: string;
   whatsMissingAfterIoTP2: string;
+  techAdvantagesTitle: string;
   featAndDemos: FeatAndDemoItem[];
   videoCasesTitle: string;
   videoCases: VideoCaseItem[];
@@ -109,6 +110,7 @@ const en: HomeContent = {
   whatsMissingAfterIoTTitle: "What's missing after IoT?",
   whatsMissingAfterIoTP1: "Traditional IoT stops at simple connectivity. Devices can connect but not think; execute but not decide. Heavy cloud reliance and rigid rules keep them purely passive.",
   whatsMissingAfterIoTP2: "ESP-Claw pushes the Agent Runtime directly to the edge, transforming ESP chips from passive \"execution nodes\" into active \"decision centers\" that perceive, reason, and act locally—breaking free from cloud dependency.",
+  techAdvantagesTitle: "Technological Advantages of ESP-Claw",
   featAndDemos: [
     {
       title: "No Programming Required, \"Chat as Creation\"",
@@ -212,6 +214,7 @@ const zhCn: HomeContent = {
   whatsMissingAfterIoTTitle: "万物互联之后，还缺什么？",
   whatsMissingAfterIoTP1: "传统 IoT 仅停留在连接层——设备能联网却不能思考，能执行却不能决策；高度依赖云端，使 IoT 始终停留在被动响应阶段。",
   whatsMissingAfterIoTP2: "ESP-Claw 将 Agent 运行时直接下沉至设备端，让 ESP 芯片化身为主动的“决策中心”——在本地完成感知、推理与决策的闭环，大幅减少云端依赖。",
+  techAdvantagesTitle: "ESP-Claw 的技术优势",
   featAndDemos: [
     {
       title: "无须编程，「聊天造物」",
