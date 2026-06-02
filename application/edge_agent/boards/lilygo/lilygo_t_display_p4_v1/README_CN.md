@@ -40,7 +40,7 @@
 进入 `application/edge_agent` 后运行：
 
 ```powershell
-python managed_components/espressif__esp_board_manager/gen_bmgr_config_codes.py -b ./boards/lilygo/lilygo_t_display_p4/v1 -c ./boards --project-dir .
+python managed_components/espressif__esp_board_manager/gen_bmgr_config_codes.py -b ./boards/lilygo/lilygo_t_display_p4_v1 -c ./boards --project-dir .
 ```
 
 生成结果会输出到：
