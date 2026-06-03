@@ -73,9 +73,19 @@ typedef struct {
 
 static EXT_RAM_BSS_ATTR claw_cap_runtime_t s_runtime = {0};
 
-static bool claw_cap_is_llm_visible(const claw_cap_descriptor_slot_t *slot,
-                                    const char *session_id,
-                                    claw_cap_caller_t caller);
+typedef enum {
+    CLAW_CAP_AUTH_OK = 0,
+    CLAW_CAP_AUTH_NOT_AVAILABLE,
+    CLAW_CAP_AUTH_NOT_EXECUTABLE,
+    CLAW_CAP_AUTH_NOT_CALLABLE_KIND,
+    CLAW_CAP_AUTH_NOT_LLM_CALLABLE,
+    CLAW_CAP_AUTH_ROOT_ONLY,
+    CLAW_CAP_AUTH_GROUP_NOT_VISIBLE,
+} claw_cap_auth_status_t;
+
+static claw_cap_auth_status_t claw_cap_authorize_llm_tool_locked(
+    const claw_cap_descriptor_slot_t *slot,
+    const claw_cap_call_context_t *ctx);
 static bool claw_cap_group_is_llm_visible_locked(size_t group_slot_index,
                                                  const char *session_id);
 static void claw_cap_clear_llm_visible_groups_locked(void);
@@ -88,6 +98,65 @@ static size_t claw_cap_count_used_descriptor_slots_locked(void);
 static size_t claw_cap_count_used_group_slots_locked(void);
 static esp_err_t claw_cap_ensure_descriptor_capacity_locked(size_t additional_free_slots);
 static esp_err_t claw_cap_ensure_group_capacity_locked(size_t additional_free_slots);
+
+static bool claw_cap_caller_is_agent(claw_cap_caller_t caller)
+{
+    return caller == CLAW_CAP_CALLER_AGENT ||
+           caller == CLAW_CAP_CALLER_ROOT_AGENT ||
+           caller == CLAW_CAP_CALLER_SUB_AGENT;
+}
+
+static const char *claw_cap_caller_to_string(claw_cap_caller_t caller)
+{
+    switch (caller) {
+    case CLAW_CAP_CALLER_SYSTEM:
+        return "system";
+    case CLAW_CAP_CALLER_AGENT:
+        return "root_agent";
+    case CLAW_CAP_CALLER_CONSOLE:
+        return "console";
+    case CLAW_CAP_CALLER_SUB_AGENT:
+        return "sub_agent";
+    default:
+        return "unknown";
+    }
+}
+
+static const char *claw_cap_auth_status_to_string(claw_cap_auth_status_t status)
+{
+    switch (status) {
+    case CLAW_CAP_AUTH_OK:
+        return "ok";
+    case CLAW_CAP_AUTH_NOT_AVAILABLE:
+        return "not_available";
+    case CLAW_CAP_AUTH_NOT_EXECUTABLE:
+        return "not_executable";
+    case CLAW_CAP_AUTH_NOT_CALLABLE_KIND:
+        return "not_callable_kind";
+    case CLAW_CAP_AUTH_NOT_LLM_CALLABLE:
+        return "not_llm_callable";
+    case CLAW_CAP_AUTH_ROOT_ONLY:
+        return "root_agent_only";
+    case CLAW_CAP_AUTH_GROUP_NOT_VISIBLE:
+        return "group_not_visible";
+    default:
+        return "unknown";
+    }
+}
+
+static void claw_cap_log_denied_call(const char *cap_name,
+                                     const claw_cap_call_context_t *ctx,
+                                     claw_cap_auth_status_t status)
+{
+    ESP_LOGW(TAG,
+             "Denied agent cap call cap=%s reason=%s caller=%s agent_id=%s agent_type=%s session_id=%s",
+             cap_name ? cap_name : "?",
+             claw_cap_auth_status_to_string(status),
+             ctx ? claw_cap_caller_to_string(ctx->caller) : "unknown",
+             (ctx && ctx->agent_id) ? ctx->agent_id : "",
+             (ctx && ctx->agent_type) ? ctx->agent_type : "",
+             (ctx && ctx->session_id) ? ctx->session_id : "");
+}
 
 static bool claw_cap_core_user_ctx_is_valid(const claw_cap_core_call_user_ctx_t *user_ctx)
 {
@@ -272,12 +341,10 @@ char *claw_cap_build_llm_tools_json(const claw_cap_call_context_t *ctx,
     cJSON *raw_tools = NULL;
     cJSON *wrapped_tools = NULL;
     cJSON *raw_tool = NULL;
-    const char *session_id = NULL;
 
     if (!s_runtime.initialized) {
         return NULL;
     }
-    session_id = (ctx && ctx->session_id && ctx->session_id[0]) ? ctx->session_id : NULL;
 
     raw_tools = cJSON_CreateArray();
     if (!raw_tools) {
@@ -290,9 +357,7 @@ char *claw_cap_build_llm_tools_json(const claw_cap_call_context_t *ctx,
         cJSON *item = NULL;
         cJSON *schema = NULL;
 
-        if (!claw_cap_is_llm_visible(slot,
-                                     session_id,
-                                     ctx ? ctx->caller : CLAW_CAP_CALLER_SYSTEM)) {
+        if (claw_cap_authorize_llm_tool_locked(slot, ctx) != CLAW_CAP_AUTH_OK) {
             continue;
         }
 
@@ -537,32 +602,35 @@ static bool claw_cap_descriptor_is_listable(
     return claw_cap_descriptor_is_available(slot);
 }
 
-static bool claw_cap_is_llm_visible(
+static claw_cap_auth_status_t claw_cap_authorize_llm_tool_locked(
     const claw_cap_descriptor_slot_t *slot,
-    const char *session_id,
-    claw_cap_caller_t caller)
+    const claw_cap_call_context_t *ctx)
 {
+    const char *session_id = (ctx && ctx->session_id && ctx->session_id[0]) ?
+                             ctx->session_id : NULL;
+    claw_cap_caller_t caller = ctx ? ctx->caller : CLAW_CAP_CALLER_SYSTEM;
+
     if (!claw_cap_descriptor_is_available(slot)) {
-        return false;
+        return CLAW_CAP_AUTH_NOT_AVAILABLE;
     }
     if (!slot->descriptor.execute) {
-        return false;
+        return CLAW_CAP_AUTH_NOT_EXECUTABLE;
     }
     if (slot->descriptor.kind != CLAW_CAP_KIND_CALLABLE &&
             slot->descriptor.kind != CLAW_CAP_KIND_HYBRID) {
-        return false;
+        return CLAW_CAP_AUTH_NOT_CALLABLE_KIND;
     }
     if (!(slot->descriptor.cap_flags & CLAW_CAP_FLAG_CALLABLE_BY_LLM)) {
-        return false;
+        return CLAW_CAP_AUTH_NOT_LLM_CALLABLE;
     }
     if (caller == CLAW_CAP_CALLER_SUB_AGENT &&
             (slot->descriptor.cap_flags & CLAW_CAP_FLAG_ROOT_AGENT_ONLY)) {
-        return false;
+        return CLAW_CAP_AUTH_ROOT_ONLY;
     }
     if (!claw_cap_group_is_llm_visible_locked(slot->group_slot_index, session_id)) {
-        return false;
+        return CLAW_CAP_AUTH_GROUP_NOT_VISIBLE;
     }
-    return true;
+    return CLAW_CAP_AUTH_OK;
 }
 
 static bool claw_cap_group_id_in_list(const char *group_id,
@@ -1746,16 +1814,11 @@ esp_err_t claw_cap_call(const char *id_or_name,
     const char *name = NULL;
     ssize_t descriptor_slot_index;
     esp_err_t err;
-    const char *session_id = NULL;
 
     if (!output || output_size == 0) {
         return ESP_ERR_INVALID_ARG;
     }
     output[0] = '\0';
-    session_id = (ctx && (ctx->caller == CLAW_CAP_CALLER_AGENT ||
-                          ctx->caller == CLAW_CAP_CALLER_ROOT_AGENT ||
-                          ctx->caller == CLAW_CAP_CALLER_SUB_AGENT) &&
-                  ctx->session_id && ctx->session_id[0]) ? ctx->session_id : NULL;
 
     claw_cap_lock();
     descriptor_slot_index = claw_cap_find_descriptor_slot_index_locked(id_or_name);
@@ -1769,20 +1832,21 @@ esp_err_t claw_cap_call(const char *id_or_name,
     {
         claw_cap_descriptor_slot_t *slot = &s_runtime.descriptor_slots[descriptor_slot_index];
 
-        if (!claw_cap_descriptor_is_available(slot) || !slot->descriptor.execute) {
+        if (ctx && claw_cap_caller_is_agent(ctx->caller)) {
+            claw_cap_auth_status_t auth_status = claw_cap_authorize_llm_tool_locked(slot, ctx);
+
+            if (auth_status != CLAW_CAP_AUTH_OK) {
+                claw_cap_log_denied_call(slot->descriptor.name, ctx, auth_status);
+                claw_cap_unlock();
+                snprintf(output, output_size,
+                         "Error: cap '%s' is not exposed to the LLM.",
+                         slot->descriptor.name);
+                return ESP_ERR_INVALID_STATE;
+            }
+        } else if (!claw_cap_descriptor_is_available(slot) || !slot->descriptor.execute) {
             claw_cap_unlock();
             snprintf(output, output_size, "Error: cap '%s' is not available",
                      id_or_name ? id_or_name : "");
-            return ESP_ERR_INVALID_STATE;
-        }
-        if (ctx && (ctx->caller == CLAW_CAP_CALLER_AGENT ||
-                    ctx->caller == CLAW_CAP_CALLER_ROOT_AGENT ||
-                    ctx->caller == CLAW_CAP_CALLER_SUB_AGENT) &&
-                !claw_cap_is_llm_visible(slot, session_id, ctx->caller)) {
-            claw_cap_unlock();
-            snprintf(output, output_size,
-                     "Error: cap '%s' is not exposed to the LLM.",
-                     slot->descriptor.name);
             return ESP_ERR_INVALID_STATE;
         }
 

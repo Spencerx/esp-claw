@@ -55,6 +55,10 @@ Current capability context only distinguishes root and subagent. It does not car
 
 Original issue: Unify tool visibility and execution authorization.
 
+Status: Implemented.
+
+Compatibility note: skill `metadata.cap_groups` remains the session-level capability group unlock mechanism. It feeds `claw_cap_set_session_llm_visible_groups()`, and the unified authorization function treats that session group visibility as one input before applying caller/agent/tool policy.
+
 ### Problem
 
 Current tool visibility and execution authorization are partially coupled through `claw_cap_is_llm_visible()`, but the policy model is incomplete. It mostly knows caller role, session-visible groups, and `CLAW_CAP_FLAG_ROOT_AGENT_ONLY`.
